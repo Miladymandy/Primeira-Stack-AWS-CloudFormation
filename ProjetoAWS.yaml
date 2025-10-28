@@ -1,0 +1,92 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Fluxo simples de uma loja de livros
+
+Resources:
+
+  # S3 para armazenar o site da livraria
+
+  # Lambda
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: LambdaExecutionRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: LambdaBasicExecution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                Resource: !Sub arn:aws:s3:::${S3Livraria}/*
+
+  # Tarefa para processar os pedidos da livraria
+  ProcessaPedidoLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: ProcessaPedido
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: python3.11
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              return {
+                  'statusCode': 200,
+                  'body': 'Pedido processado com sucesso!'
+              }
+
+  # API Gateway para recebe requisições
+  LojaApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: LojaApi
+
+  LojaResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref LojaApi
+      ParentId: !GetAtt LojaApi.RootResourceId
+      PathPart: pedido
+
+  LojaMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref LojaApi
+      ResourceId: !Ref LojaResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub
+          - arn:aws:apigateway:${Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations
+          - Region: !Ref AWS::Region
+            LambdaArn: !GetAtt ProcessaPedidoLambda.Arn
+
+  LambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ProcessaPedidoLambda
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${LojaApi}/*/POST/pedido
+  S3Livraria:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: loja-de-livros-exemplo
+      WebsiteConfiguration:
+        IndexDocument: index.html
